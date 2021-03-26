@@ -701,6 +701,42 @@ class TestTyping(TestCase):
         self.assertTrue(dp.type.param == int)
         self.assertEqual(id(DP6.type), id(dp.type))
 
+    def test_construct_time(self):
+        from torch.utils.data import construct_time_validation
+
+        class DP0(IterDataPipe[Tuple]):
+            @construct_time_validation
+            def __init__(self, dp: IterDataPipe):
+                self.dp = dp
+
+            def __iter__(self) -> Iterator[Tuple]:
+                for d in self.dp:
+                    yield d, str(d)
+
+        class DP1(IterDataPipe[int]):
+            @construct_time_validation
+            def __init__(self, dp: IterDataPipe[Tuple[int, str]]):
+                self.dp = dp
+
+            def __iter__(self) -> Iterator[int]:
+                for a, b in self.dp:
+                    yield a
+
+        # Non-DataPipe input with DataPipe hint
+        datasource = [(1, '1'), (2, '2'), (3, '3')]
+        with self.assertRaisesRegex(TypeError, r"Expected argument 'dp' as a IterDataPipe"):
+            dp = DP0(datasource)
+
+        dp = DP0(IDP(range(10)))
+        with self.assertRaisesRegex(TypeError, r"Expected type of argument 'dp' as a subtype"):
+            dp = DP1(dp)
+
+        with self.assertRaisesRegex(TypeError, r"Can not decorate"):
+            class InvalidDP1(IterDataPipe[int]):
+                @construct_time_validation
+                def __iter__(self):
+                    yield 0
+
 
 if __name__ == '__main__':
     run_tests()
