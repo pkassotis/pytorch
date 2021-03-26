@@ -134,10 +134,7 @@ static DimMask make_dim_mask(IntArrayRef dims, int64_t ndim) {
   return mask;
 }
 
-static void allocate_reduction_result(
-    Tensor& result, const Tensor& self, DimMask mask, bool keepdim,
-    ScalarType dtype)
-{
+inline DimVector shape_from_dim_mask(const Tensor& self, DimMask mask, bool keepdim) {
   auto shape = DimVector(self.sizes());
   for (int dim = shape.size() - 1; dim >= 0; dim--) {
     if (mask[dim]) {
@@ -148,11 +145,24 @@ static void allocate_reduction_result(
       }
     }
   }
-  if (result.defined()) {
-    result.resize_(shape);
-  } else {
-    result = at::empty(shape, self.options().dtype(dtype));
-  }
+  return shape;
+}
+
+static void allocate_reduction_result(
+    Tensor& result, const Tensor& self, DimMask mask, bool keepdim,
+    ScalarType dtype)
+{
+  auto shape = shape_from_dim_mask(self, mask, keepdim);
+  TORCH_CHECK(result.defined(), "Cannot create a new tensor inside a reduction op. You likely tried to call an operator with an out argument but the out argument was an undefined tensor.");
+  result.resize_(shape);
+}
+
+inline Tensor create_reduction_result(
+  const Tensor& self, IntArrayRef dim, bool keepdim, ScalarType dtype
+) {
+  DimMask mask = make_dim_mask(dim, self.dim());
+  auto shape = shape_from_dim_mask(self, mask, keepdim);
+  return at::empty(shape, self.options().dtype(dtype));
 }
 
 static Tensor review_reduce_result(const Tensor& result, int ndim, DimMask mask, bool keepdim) {
