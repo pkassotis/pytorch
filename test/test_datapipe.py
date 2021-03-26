@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 from torch.testing._internal.common_utils import (TestCase, run_tests)
 from torch.utils.data import IterDataPipe, RandomSampler, DataLoader
-from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Set, Union
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, TypeVar, Set, Union
 
 import torch.utils.data.datapipes as dp
 from torch.utils.data.datapipes.utils.decoder import (
@@ -302,6 +302,7 @@ class TestFunctionalIterDataPipe(TestCase):
         self.assertEqual(list(concat_dp), list(range(10)) + list(range(5)))
 
         input_dp_nl = IDP_NoLen(range(5))
+
         concat_dp = input_dp1.concat(input_dp_nl)
         with self.assertRaises(NotImplementedError):
             len(concat_dp)
@@ -606,6 +607,99 @@ class TestTyping(TestCase):
                 par = subscript_type[pars]  # type: ignore
                 self.assertTrue(issubtype(sub, par))
                 self.assertFalse(issubtype(par, sub))
+
+    # Static checking annotation
+    def test_compile_time(self):
+        with self.assertRaisesRegex(TypeError, r"Expected 'Iterator' as the return"):
+            class InvalidDP1(IterDataPipe[int]):
+                def __iter__(self) -> str:  # type: ignore
+                    yield 0
+
+        with self.assertRaisesRegex(TypeError, r"Unmatched type annotation"):
+            class InvalidDP2(IterDataPipe[Tuple]):
+                def __iter__(self) -> Iterator[int]:  # type: ignore
+                    yield 0
+
+        class DP1(IterDataPipe[Tuple[int, str]]):
+            r""" DataPipe with fixed type"""
+            def __init__(self, length):
+                self.length = length
+
+            def __iter__(self) -> Iterator[Tuple[int, str]]:
+                for d in range(self.length):
+                    yield d, str(d)
+
+        self.assertTrue(issubclass(DP1, IterDataPipe))
+        dp1 = DP1(10)
+        self.assertTrue(DP1.type.issubtype(dp1.type) and dp1.type.issubtype(DP1.type))
+        # Fixed type share one type instance
+        self.assertEqual(id(DP1.type), id(dp1.type))
+        dp2 = DP1(5)
+        self.assertEqual(dp1.type, dp2.type)
+        self.assertEqual(id(dp1.type), id(dp2.type))
+
+        class DP2(IterDataPipe[T_co]):
+            r""" DataPipe without fixed type"""
+            def __iter__(self) -> Iterator[T_co]:
+                for d in range(10):
+                    yield d  # type: ignore
+
+        self.assertTrue(issubclass(DP2, IterDataPipe))
+        dp1 = DP2()  # type: ignore
+        self.assertTrue(DP2.type.issubtype(dp1.type) and dp1.type.issubtype(DP2.type))
+        # DataPipe instance with non-fixed type has own type instance
+        self.assertNotEqual(id(DP2.type), id(dp1.type))
+        dp2 = DP2()  # type: ignore
+        self.assertEqual(dp1.type, dp2.type)
+        self.assertNotEqual(id(dp1.type), id(dp2.type))
+
+        class DP3(IterDataPipe[Tuple[T_co, str]]):
+            r""" DataPipe without fixed type with __init__ function"""
+            def __init__(self, datasource):
+                self.datasource = datasource
+
+            def __iter__(self) -> Iterator[Tuple[T_co, str]]:
+                for d in self.datasource:
+                    yield d, str(d)
+
+        self.assertTrue(issubclass(DP3, IterDataPipe))
+        dp1 = DP3(range(10))  # type: ignore
+        self.assertTrue(DP3.type.issubtype(dp1.type) and dp1.type.issubtype(DP3.type))
+        # DataPipe instance with non-fixed type has own type instance
+        self.assertNotEqual(id(DP3.type), id(dp1.type))
+        dp2 = DP3(5)  # type: ignore
+        self.assertEqual(dp1.type, dp2.type)
+        self.assertNotEqual(id(dp1.type), id(dp2.type))
+
+        class DP4(IterDataPipe[tuple]):
+            r""" DataPipe without annotation"""
+            def __iter__(self):
+                raise NotImplementedError
+
+        self.assertTrue(issubclass(DP4, IterDataPipe))
+        dp = DP4()
+        self.assertTrue(dp.type.param == tuple)
+        self.assertNotEqual(id(DP4.type), id(dp.type))
+
+        class DP5(IterDataPipe):
+            r""" DataPipe with plain Iterator"""
+            def __iter__(self) -> Iterator:
+                raise NotImplementedError
+
+        self.assertTrue(issubclass(DP5, IterDataPipe))
+        dp = DP5()  # type: ignore
+        self.assertTrue(dp.type.param == Any)
+        self.assertNotEqual(id(DP5.type), id(dp.type))
+
+        class DP6(IterDataPipe[int]):
+            r""" DataPipe with plain Iterator"""
+            def __iter__(self) -> Iterator:
+                raise NotImplementedError
+
+        self.assertTrue(issubclass(DP6, IterDataPipe))
+        dp = DP6()  # type: ignore
+        self.assertTrue(dp.type.param == int)
+        self.assertEqual(id(DP6.type), id(dp.type))
 
 
 if __name__ == '__main__':
