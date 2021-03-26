@@ -381,10 +381,12 @@ struct C10_EXPORT ivalue::Future : c10::intrusive_ptr_target {
         !completed(),
         "Attempting to mark a completed Future as complete again. Note that "
         "a Future can only be marked completed once.");
-    completed_ = true;
     value_ = std::move(value);
 
     postMarkCompletedHook(value_, std::move(data_ptrs));
+    // Only set completed_ flag once postMarkCompletedHook has
+    // returned successfully to allow for proper error propagation.
+    completed_ = true;
 
     std::vector<std::function<void(void)>> cbs;
     cbs.swap(callbacks_);
